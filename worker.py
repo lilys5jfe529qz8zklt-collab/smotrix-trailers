@@ -139,8 +139,7 @@ class Worker:
                 continue
             channels = [row["channel_id"] for row in self.db.channels(enabled_only=True) if row["channel_id"]]
             channels = list(dict.fromkeys(channels))
-            best = None
-            best_score = 0
+            scored: list[tuple[int, dict[str, Any]]] = []
             for channel_id in channels:
                 for query_name in dict.fromkeys([name, orig]):
                     if not query_name:
@@ -149,10 +148,19 @@ class Worker:
                     candidates = await youtube.search_channel(channel_id, query, limit=8)
                     for video in candidates:
                         score = self.matcher.rank_video(video["title"], {**title, "title": name, "year": year})
-                        if score > best_score:
-                            best_score = score
-                            best = video
+                        scored.append((score, video))
                     await asyncio.sleep(1.0)
+            scored.sort(key=lambda pair: pair[0], reverse=True)
+            best = None
+            best_score = 0
+            for score, video in scored:
+                if score < 70:
+                    break
+                seen_row = self.db.seen(video["youtube_id"])
+                if seen_row and seen_row["status"] == "failed":
+                    continue
+                best, best_score = video, score
+                break
             checked += 1
             if best is None or best_score < 70:
                 self.db.mark_discovery(title_id, name, year, "no_trailer", error="не найдено")
@@ -356,6 +364,9 @@ class Worker:
             logger.warning("trailer %s: %s", youtube_id, exc)
             if attempts >= MAX_ATTEMPTS:
                 self.db.set_status(youtube_id, "failed", str(exc), attempts=attempts)
+                self.db.mark_discovery(
+                    title_id, title_name, int(row["title_year"] or 0), "failed", youtube_id, str(exc)
+                )
                 await self.notify(f"Трейлер не загрузился: {title_name} — {str(exc)[:160]}")
             else:
                 self.db.set_status(youtube_id, "pending", str(exc), attempts=attempts)
