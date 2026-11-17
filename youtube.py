@@ -43,10 +43,19 @@ def _ffmpeg() -> str | None:
         return None
 
 
-def _resolve_sync(url: str) -> dict[str, str]:
+def _channel_url(url: str) -> str:
     target = url.strip()
+    if target.startswith("@"):
+        target = "https://www.youtube.com/" + target
+    elif not target.startswith(("http://", "https://")):
+        target = "https://www.youtube.com/@" + target.lstrip("@")
     if "/@" in target and not target.rstrip("/").endswith("/videos"):
         target = target.rstrip("/") + "/videos"
+    return target
+
+
+def _resolve_sync(url: str) -> dict[str, str]:
+    target = _channel_url(url)
     opts = _base_opts() | {"extract_flat": True, "playlistend": 1, "skip_download": True}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(target, download=False)
@@ -64,7 +73,7 @@ async def resolve_channel(url: str) -> dict[str, str]:
 def _channel_from_html_sync(url: str) -> str:
     import urllib.request
 
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "ru"})
+    request = urllib.request.Request(_channel_url(url), headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "ru"})
     with urllib.request.urlopen(request, timeout=30) as response:
         html = response.read().decode("utf-8", "replace")
     match = CHANNEL_RE.search(html)
