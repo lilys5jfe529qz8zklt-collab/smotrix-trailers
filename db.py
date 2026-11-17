@@ -193,6 +193,19 @@ class DB:
         )
         self.conn.commit()
 
+    def delete_trailer(self, youtube_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM trailers WHERE youtube_id=?", (youtube_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        self.conn.execute("DELETE FROM trailers WHERE youtube_id=?", (youtube_id,))
+        if int(row["title_id"] or 0) > 0:
+            self.conn.execute("DELETE FROM discoveries WHERE title_id=?", (int(row["title_id"]),))
+        self.conn.commit()
+        return data
+
     def latest(self, title_id: int) -> sqlite3.Row | None:
         return self.conn.execute(
             "SELECT * FROM trailers WHERE title_id=? AND status='done' AND message_id>0 "

@@ -183,6 +183,24 @@ def create_app(db: DB, telegram: Telegram, worker: Worker) -> web.Application:
                 results.append({"ok": False, "error": str(exc)[:200], "url": url})
         return web.json_response({"ok": True, "results": results})
 
+    async def admin_delete(request: web.Request) -> web.Response:
+        if not _admin(request):
+            return web.json_response({"ok": False, "error": "forbidden"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        youtube_id = str(body.get("youtube_id") or "").strip()
+        if not youtube_id:
+            return web.json_response({"ok": False, "error": "нет id"}, status=400)
+        row = db.delete_trailer(youtube_id)
+        if row is None:
+            return web.json_response({"ok": False, "error": "not found"}, status=404)
+        if int(row.get("message_id") or 0):
+            await telegram.delete(int(row["message_id"]))
+        worker.wake()
+        return web.json_response({"ok": True, "deleted": youtube_id, "title_id": row.get("title_id")})
+
     async def admin_retry(request: web.Request) -> web.Response:
         if not _admin(request):
             return web.json_response({"ok": False, "error": "forbidden"}, status=403)
@@ -237,6 +255,7 @@ def create_app(db: DB, telegram: Telegram, worker: Worker) -> web.Application:
     app.router.add_post("/api/admin/poll", admin_poll)
     app.router.add_post("/api/admin/link", admin_links)
     app.router.add_post("/api/admin/retry", admin_retry)
+    app.router.add_post("/api/admin/delete", admin_delete)
     app.router.add_post("/api/admin/channel", admin_channel)
     app.router.add_get("/media/{message_id}", media_route)
     app.router.add_get("/", index)

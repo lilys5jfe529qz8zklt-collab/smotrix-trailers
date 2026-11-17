@@ -17,7 +17,21 @@ NOISE = (
     "премьера", "эксклюзив", "международный", "official trailer", "official teaser",
     "official", "final trailer", "final", "new trailer", "trailer", "teaser",
     "dubbed", "russian", "in cinemas", "imax", "4k", "8k", "uhd", "hd", "1080p", "720p",
+    "сериал", "сериалы", "мини-сериал", "многосерийный", "series", "фильм", "movie",
+    "полнометражный", "кинотеатр", "в кино",
 )
+SERIES_RE = re.compile(r"сериал|сезон|series|season|эпизод|episode", re.I)
+MOVIE_RE = re.compile(r"фильм|movie|полнометраж|кинотеатр|в кино", re.I)
+TYPE_RE = re.compile(r"\b(сериал\w*|мини-сериал\w*|многосерийн\w*|series|фильм\w*|movie|полнометражн\w*|кинотеатр\w*)\b", re.I)
+
+
+def type_ok(video_title: str, target: dict[str, Any]) -> bool:
+    raw = str(video_title or "")
+    series = bool(SERIES_RE.search(raw))
+    movie = bool(MOVIE_RE.search(raw))
+    if bool(target.get("is_series")):
+        return not (movie and not series)
+    return not (series and not movie)
 PUNCT_RE = re.compile(r"[^a-zа-яё0-9]+")
 
 
@@ -35,6 +49,7 @@ def clean_title(raw: str) -> str:
     text = TAG_RE.sub(" ", str(raw or ""))
     text = text.replace("｜", "|").replace("—", " - ")
     lowered = text.casefold().replace("ё", "е")
+    lowered = TYPE_RE.sub(" ", lowered)
     for noise in NOISE:
         lowered = lowered.replace(noise, " ")
     lowered = YEAR_RE.sub(" ", lowered)
@@ -91,11 +106,15 @@ def _score(candidate: dict[str, Any], variant: str, year: int) -> int:
     if not wanted:
         return -1
     best = 0
+    wanted_tokens = wanted.split()
+    short = len(wanted_tokens) <= 2
     for name in names:
         if not name:
             continue
         if name == wanted:
             best = max(best, 100)
+            continue
+        if short:
             continue
         if len(wanted) >= 4 and (wanted in name or name in wanted):
             best = max(best, 70)
@@ -128,8 +147,14 @@ class Matcher:
 
     @staticmethod
     def rank_video(video_title: str, target: dict[str, Any]) -> int:
+        if not type_ok(video_title, target):
+            return 0
         year = int(target.get("year") or 0)
-        candidate = {"title": video_title, "title_orig": video_title, "year": year}
+        video_year = year_of(video_title)
+        if year and video_year and abs(year - video_year) > 1:
+            return 0
+        cleaned = clean_title(video_title)
+        candidate = {"title": cleaned, "title_orig": cleaned, "year": video_year}
         best = 0
         for name in (target.get("title") or "", target.get("title_orig") or ""):
             if name:
@@ -172,6 +197,8 @@ class Matcher:
             for candidate in await self._search(session, query):
                 title_id = int(candidate.get("id") or 0)
                 if title_id <= 0 or int(candidate.get("stored") or 0) <= 0:
+                    continue
+                if not type_ok(youtube_title, candidate):
                     continue
                 score = _score(candidate, target, year)
                 previous = candidates.get(title_id)
