@@ -83,7 +83,7 @@ function renderList(items) {
     return `<div class="item">
       <div class="item-top">
         <div>
-          <div class="item-title">${esc(row.title || "Без названия")}${row.year ? ` · ${row.year}` : ""}</div>
+          <div class="item-title">${esc(row.title || row.youtube_title || row.youtube_id || "Без названия")}${row.year ? ` · ${row.year}` : ""}</div>
           <div class="item-sub">${esc(row.youtube_title || row.youtube_id)}</div>
         </div>
         <span class="badge ${esc(status)}">${esc(STATUS[status] || status)}</span>
