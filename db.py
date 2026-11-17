@@ -154,7 +154,7 @@ class DB:
 
     def next_pending(self) -> sqlite3.Row | None:
         return self.conn.execute(
-            "SELECT * FROM trailers WHERE status='pending' ORDER BY published_at DESC, created_at LIMIT 1"
+            "SELECT * FROM trailers WHERE status='pending' ORDER BY title_year DESC, published_at DESC, created_at LIMIT 1"
         ).fetchone()
 
     def retry(self, youtube_id: str) -> None:
