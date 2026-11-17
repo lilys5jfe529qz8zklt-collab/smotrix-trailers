@@ -126,6 +126,21 @@ class Matcher:
     def __init__(self) -> None:
         self._cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
+    @staticmethod
+    def rank_video(video_title: str, target: dict[str, Any]) -> int:
+        year = int(target.get("year") or 0)
+        candidate = {"title": video_title, "title_orig": video_title, "year": year}
+        best = 0
+        for name in (target.get("title") or "", target.get("title_orig") or ""):
+            if name:
+                best = max(best, _score(candidate, name, year))
+        lowered = str(video_title or "").casefold()
+        if "трейлер" in lowered or "trailer" in lowered:
+            best += 8
+        if "тизер" in lowered or "teaser" in lowered:
+            best -= 15
+        return best
+
     async def _search(self, session: aiohttp.ClientSession, query: str) -> list[dict[str, Any]]:
         cached = self._cache.get(query)
         if cached and time.time() - cached[0] < 600:

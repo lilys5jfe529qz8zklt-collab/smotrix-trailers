@@ -124,6 +124,33 @@ async def fetch_feed(session: aiohttp.ClientSession, channel_id: str) -> list[di
         return []
 
 
+def _search_channel_sync(channel_id: str, query: str, limit: int = 8) -> list[dict[str, Any]]:
+    from urllib.parse import quote
+
+    url = f"https://www.youtube.com/channel/{channel_id}/search?query={quote(query)}"
+    opts = _base_opts() | {"extract_flat": True, "playlistend": limit, "skip_download": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    out: list[dict[str, Any]] = []
+    for entry in info.get("entries") or []:
+        video_id = str(entry.get("id") or "")
+        title = str(entry.get("title") or "")
+        if video_id and title:
+            out.append({
+                "youtube_id": video_id,
+                "title": title,
+                "channel_id": str(entry.get("channel_id") or channel_id),
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+            })
+    return out
+
+
+async def search_channel(channel_id: str, query: str, limit: int = 8) -> list[dict[str, Any]]:
+    if not channel_id:
+        return []
+    return await asyncio.to_thread(_search_channel_sync, channel_id, query, limit)
+
+
 def _probe_sync(url: str) -> dict[str, Any]:
     opts = _base_opts() | {"skip_download": True}
     with yt_dlp.YoutubeDL(opts) as ydl:

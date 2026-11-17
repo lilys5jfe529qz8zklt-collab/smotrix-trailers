@@ -16,6 +16,8 @@ from config import (
     DEFAULT_QUALITY,
     MAX_FILE_MB,
     POLL_MINUTES,
+    STORAGE_API_BASE,
+    STORAGE_TOKEN,
     TRAILER_CHAT_ID,
     YOUTUBE_CHANNELS,
 )
@@ -28,6 +30,9 @@ logger = logging.getLogger(__name__)
 TEMP = DATA_DIR / "tmp"
 TEMP.mkdir(parents=True, exist_ok=True)
 MAX_ATTEMPTS = 3
+DISCOVERY_BATCH = 3
+DISCOVERY_RETRY = 7 * 24 * 3600
+DISCOVERY_INTERVAL = 60
 
 
 class Worker:
@@ -40,6 +45,7 @@ class Worker:
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
+        self._last_discovery = 0.0
 
     async def start(self) -> None:
         self._session = aiohttp.ClientSession()
@@ -74,6 +80,9 @@ class Worker:
                     last_poll = time.time()
                 row = self.db.next_pending()
                 if row is None:
+                    if time.time() - self._last_discovery >= DISCOVERY_INTERVAL:
+                        self._last_discovery = time.time()
+                        await self.discover()
                     try:
                         await asyncio.wait_for(self._wake.wait(), timeout=60)
                     except asyncio.TimeoutError:
@@ -87,10 +96,108 @@ class Worker:
                 logger.exception("worker loop: %s", exc)
                 await asyncio.sleep(5)
 
+    async def _priority_titles(self) -> list[dict[str, Any]]:
+        if not STORAGE_API_BASE:
+            return []
+        url = STORAGE_API_BASE + "/api/index/priority"
+        params = {"limit": 500}
+        if STORAGE_TOKEN:
+            params["token"] = STORAGE_TOKEN
+        session = self._session or aiohttp.ClientSession()
+        try:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                payload = await response.json(content_type=None)
+            return (payload.get("titles") or []) if isinstance(payload, dict) else []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("priority titles: %s", str(exc)[:160])
+            return []
+        finally:
+            if session is not self._session:
+                await session.close()
+
+    async def discover(self) -> dict[str, int]:
+        titles = await self._priority_titles()
+        if not titles:
+            return {"checked": 0, "queued": 0}
+        now = time.time()
+        checked = queued = 0
+        for title in titles:
+            if checked >= DISCOVERY_BATCH:
+                break
+            title_id = int(title.get("id") or 0)
+            if title_id <= 0 or int(title.get("stored") or 0) <= 0:
+                continue
+            if self.db.latest(title_id) is not None:
+                continue
+            state = self.db.discovery(title_id)
+            if state and now - int(state["last_checked"] or 0) < DISCOVERY_RETRY:
+                continue
+            name = str(title.get("title") or title.get("title_orig") or "").strip()
+            orig = str(title.get("title_orig") or "").strip()
+            year = int(title.get("year") or 0)
+            if not name:
+                continue
+            channels = [row["channel_id"] for row in self.db.channels(enabled_only=True) if row["channel_id"]]
+            channels = list(dict.fromkeys(channels))
+            best = None
+            best_score = 0
+            for channel_id in channels:
+                for query_name in dict.fromkeys([name, orig]):
+                    if not query_name:
+                        continue
+                    query = f"{query_name} {year} трейлер".strip()
+                    candidates = await youtube.search_channel(channel_id, query, limit=8)
+                    for video in candidates:
+                        score = self.matcher.rank_video(video["title"], {**title, "title": name, "year": year})
+                        if score > best_score:
+                            best_score = score
+                            best = video
+                    await asyncio.sleep(1.0)
+            checked += 1
+            if best is None or best_score < 70:
+                self.db.mark_discovery(title_id, name, year, "no_trailer", error="не найдено")
+                continue
+            youtube_id = str(best["youtube_id"])
+            seen = self.db.seen(youtube_id)
+            if seen and seen["status"] == "done":
+                self.db.mark_discovery(title_id, name, year, "found", youtube_id)
+                continue
+            try:
+                info = await youtube.probe(best["url"])
+                duration = int(info.get("duration") or 0)
+                if duration and (duration < 20 or duration > 900):
+                    self.db.mark_discovery(title_id, name, year, "no_trailer", error="не трейлер")
+                    continue
+                published = int(info.get("uploaded_at") or time.time())
+            except Exception:
+                published = int(time.time())
+            data = {
+                "youtube_id": youtube_id,
+                "title_id": title_id,
+                "title_name": name,
+                "title_year": year,
+                "youtube_title": best["title"],
+                "published_at": published,
+                "quality": self.db.quality(),
+            }
+            if seen:
+                self.db.retry(youtube_id)
+                self.db.set_status(youtube_id, "pending", "", quality=data["quality"])
+            else:
+                self.db.add_trailer(data)
+            self.db.mark_discovery(title_id, name, year, "queued", youtube_id)
+            queued += 1
+            await self.notify(f"Найден трейлер: {name} ({year})")
+            await asyncio.sleep(1.0)
+        if checked or queued:
+            logger.info("discover: проверено %s, в очередь %s", checked, queued)
+        return {"checked": checked, "queued": queued}
+
     async def poll_channels(self) -> dict[str, int]:
         added = skipped = 0
         session = self._session or aiohttp.ClientSession()
         try:
+            seen_channels: set[str] = set()
             for row in self.db.channels(enabled_only=True):
                 url = str(row["url"])
                 channel_id = str(row["channel_id"] or "")
@@ -102,8 +209,9 @@ class Worker:
                         title = title or info.get("title") or ""
                     except Exception:
                         channel_id = await youtube.channel_from_html(url)
-                if not channel_id:
+                if not channel_id or channel_id in seen_channels:
                     continue
+                seen_channels.add(channel_id)
                 if not title or channel_id != row["channel_id"]:
                     self.db.add_channel(url, channel_id, title)
                 entries = await youtube.fetch_feed(session, channel_id)
@@ -231,6 +339,9 @@ class Worker:
             message_id = await self.telegram.upload(
                 path, caption, duration, width or 1280, height or 720,
                 progress=lambda done, total: self.current.update(bytes=done, total=total),
+            )
+            self.db.mark_discovery(
+                title_id, title_name, int(row["title_year"] or 0), "found", youtube_id
             )
             self.db.set_status(
                 youtube_id, "done", "", message_id=message_id, size=size,

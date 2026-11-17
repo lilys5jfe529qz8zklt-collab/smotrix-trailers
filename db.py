@@ -50,6 +50,16 @@ class DB:
             );
             CREATE INDEX IF NOT EXISTS trailers_title ON trailers(title_id, status);
             CREATE INDEX IF NOT EXISTS trailers_published ON trailers(published_at);
+            CREATE TABLE IF NOT EXISTS discoveries (
+                title_id INTEGER PRIMARY KEY,
+                title_name TEXT NOT NULL DEFAULT '',
+                title_year INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'new',
+                youtube_id TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_checked INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         self.conn.commit()
@@ -151,6 +161,35 @@ class DB:
         self.conn.execute(
             "UPDATE trailers SET status='pending', error='', attempts=0, updated_at=? WHERE youtube_id=?",
             (int(time.time()), youtube_id),
+        )
+        self.conn.commit()
+
+    def discovery(self, title_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM discoveries WHERE title_id=?", (int(title_id),)
+        ).fetchone()
+
+    def mark_discovery(
+        self,
+        title_id: int,
+        title_name: str,
+        title_year: int,
+        status: str,
+        youtube_id: str = "",
+        error: str = "",
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO discoveries(title_id,title_name,title_year,status,youtube_id,error,attempts,last_checked)
+            VALUES(?,?,?,?,?,?,1,?)
+            ON CONFLICT(title_id) DO UPDATE SET
+                status=excluded.status,
+                youtube_id=excluded.youtube_id,
+                error=excluded.error,
+                attempts=discoveries.attempts+1,
+                last_checked=excluded.last_checked
+            """,
+            (int(title_id), title_name, int(title_year), status, youtube_id, error[:500], int(time.time())),
         )
         self.conn.commit()
 
