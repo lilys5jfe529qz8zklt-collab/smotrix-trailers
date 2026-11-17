@@ -1,0 +1,7 @@
+.secrets/
+data/
+.runtime/
+__pycache__/
+*.pyc
+*.session
+*.session-journal

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>720 · трейлеры</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="app.css?v=1">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="dot"></span>720</div>
+    <div class="tag">трейлеры</div>
+  </header>
+
+  <main>
+    <section class="stats" id="stats">
+      <div class="stat"><b>—</b><span>готово</span></div>
+      <div class="stat"><b>—</b><span>в очереди</span></div>
+      <div class="stat"><b>—</b><span>ошибок</span></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Качество по умолчанию</h2><span id="qualityNow">1080p</span></div>
+      <div class="chips" id="qualityChips">
+        <button data-q="480">480p</button>
+        <button data-q="720">720p</button>
+        <button data-q="1080">1080p</button>
+        <button data-q="1440">1440p</button>
+        <button data-q="2160">2160p</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Добавить ссылки</h2></div>
+      <textarea id="links" rows="3" placeholder="Ссылки на YouTube, по одной в строке"></textarea>
+      <div class="actions">
+        <button class="primary" id="addLinks">Поставить в очередь</button>
+        <button class="ghost" id="poll">Проверить каналы</button>
+      </div>
+      <div class="note" id="addNote"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Каналы</h2><span id="channelCount">0</span></div>
+      <div id="channels" class="channels"></div>
+      <div class="actions">
+        <input id="channelUrl" placeholder="@канал или ссылка">
+        <button class="ghost" id="addChannel">Добавить</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head"><h2>Трейлеры</h2><span id="current"></span></div>
+      <div id="list" class="list"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
